@@ -14,23 +14,40 @@ typedef enum {
   RUN,
 } stateMachine;
 stateMachine state;
-bool gpio0Clicked = false;
-bool gpio12Clicked = false;
-bool gpio14Clicked = false;
+
+// Briefs
+int nBriefs = 0;
+char briefs[512];
+
+// Quote
+char quote[64];
+
+// Buttons 
+typedef enum {
+  UP_BUTTON,
+  ENTER_BUTTON,
+  DOWN_BUTTON,
+  NONE,
+} buttonEvent;
+
+buttonEvent bEvent = NONE;
 
 // Persistant Infos
 #define SSID_EEPROM_IDX 0
 #define PASS_EEPROM_IDX 32
 #define NAME_EEPROM_IDX 64
+#define GREE_EEPROM_IDX 96
 typedef struct {
    uint32_t A;
    char B[256];
 } persistentData;
 
 // DNS Defs
+#define CONNECTION_RETRIES 40
 const byte DNS_PORT = 53;
 IPAddress apIP(192, 168, 4, 1);
 DNSServer dnsServer;
+uint8_t mac[6];
 
 // WebServer
 ESP8266WebServer server(80);
@@ -46,21 +63,25 @@ int xSz = 128;
 int ySz = 64;
 
 // IRQs
-
 void gpioIrq0() {
   Serial.printf("Button 0 clicked\r\n");
-  gpio0Clicked = true;
+  if(bEvent == NONE)
+    bEvent = UP_BUTTON;
 }
 
 void gpioIrq12() {
   Serial.printf("Button 12 clicked\r\n");
-  gpio12Clicked = true;
+  if(bEvent == NONE)
+    bEvent = DOWN_BUTTON;
 }
 
 void gpioIrq14() {
   Serial.printf("Button 14 clicked\r\n");
-  gpio14Clicked = true;
+  if(bEvent == NONE)
+    bEvent = ENTER_BUTTON;
 }
+
+// ====== Persistent Configuration ======
 
 void dumpEEPROM() {
   for(int i = 1; i <= 512;i++) {
@@ -70,8 +91,6 @@ void dumpEEPROM() {
     }
   }
 }
-
-// ====== Persistent Configuration ======
 
 void storeSsid(String ssid) {
   EEPROM.write(SSID_EEPROM_IDX,ssid.length());
@@ -131,36 +150,116 @@ void apHandleConfig() {
   ESP.reset();
 }
 
+// ====== Content Loading ======
+
+char content[512];
+int contentCurr = 0;
+int contentMaxSz = 512;
+
+int loadContent(const char *request, char* b, int bMax) {
+  int bCurr = 0;
+  // Load content here.
+  WiFiClient client;
+  if (!client.connect("www.carbon14.arichard.fr", 3333)) {
+    Serial.println("connection failed");
+    return -1;
+  }
+  // Forge a request with the request type and the mac address which is our unique identifier
+  client.printf("{\"request\":\"%s\",\"id\":\"%02x:%02x:%02x:%02x:%02x:%02x\"}",request,mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+  // uint32_t t0 = ESP.getCycleCount();
+  while(bCurr < bMax) {
+    if(client.available()>0) {
+      char c = client.read();
+      if(c != '\r') {
+        b[bCurr++] = c;
+      } else {
+        break;
+      }
+    }
+  }
+  for(int i = 0; i< bCurr; i++) {
+    Serial.printf("%02x",b[i]);
+    if(((i%16) == 0) && (i!= 0)) {
+      Serial.printf("\r\n");
+    }
+  }
+  return bCurr;
+}
+
+void loadQuote(void) {
+  int contentSz = loadContent("quote",content,contentMaxSz);
+  if((contentSz > 0) && (contentSz<64)) {
+    strncpy(quote,content,contentSz);
+    quote[contentSz] = '\0';
+  } else {
+    Serial.println("Error getting quote");
+  }
+}
+
+void loadBriefs(void) {
+  int contentSz = loadContent("briefs",content,contentMaxSz);
+  if((contentSz > 0) && (contentSz<512)) {
+    strncpy(briefs,content,contentSz);
+    briefs[contentSz] = '\0';
+    nBriefs = 0;
+    for(int i =0; i< strlen(briefs); i++) {
+      // The briefs are separated by semicolons
+      if(briefs[i] = ';')
+        nBriefs++;
+    }
+  } else {
+    Serial.println("Error getting briefs");
+  }
+}
+
+void loadAll(void) {
+  // Could do a signe request..
+  loadQuote();
+  loadBriefs();
+}
+
 // ====== Display stuffs ======
 
-typedef void (*drawScreen)(int x, int y);
+typedef void (*drawScreen)(int x, int y, int a);
 
-void drawFrame1(int x,int y) {
-  display.setFontScale2x2(false);
-  Serial.println(x+48);
-  Serial.println(y+25);
-  display.drawString(x + 48, y + 25, "Frame1");
-  display.drawMyFmt(x + 16 , y + 16,bite);
+void drawWeatherFrame(int x,int y, int a) {
+  display.drawString(xSz/2 - 8 -  ((7*8) /2) + x, ySz/2 - 4 + y, "Wheater");
+  //display.drawMyFmt(x + 16 , y + 16,bite);
 }
 
-void drawFrame2(int x, int y) {
-  display.setFontScale2x2(false);
-  Serial.println(x+48);
-  Serial.println(y+25);
-  display.drawString(x + 48, y + 25, "Frame2");
-  display.drawMyFmt(x + 16 , y + 16,bite);
+void drawQuoteFrame(int x, int y, int a) {
+  int l = strlen(quote) * 8;
+  int nLines = l / 112;
+  int restLines = l % 112;
+  int totaLines = nLines + (restLines!=0)?1:0;
+  int j = 0;
+  for( int i = 0; i< nLines; i++) {
+    char buff[15];
+    strncpy(buff,quote+j,15);
+    j+=15;
+    display.drawString(0 + x , ySz/2 - (totaLines*8/2) + i*8 + y, buff);
+  }
+  if(restLines !=0) {
+    display.drawString(xSz/2 - restLines/2 + x , ySz/2 - (totaLines*8/2)  + nLines * 8 + y, quote+j);
+  }
+  //display.drawMyFmt(x + 16 , y + 16,bite);
 }
 
-void drawFrame3(int x, int y) {
-  display.setFontScale2x2(false);
-  Serial.println(x+48);
-  Serial.println(y+25);
-  display.drawString(x + 48, y + 25, "Frame3");
-  display.drawMyFmt(x + 16 , y + 16,bite);
+void drawMessageFrame(int x, int y, int a) {
+  display.drawString(xSz/2 - 8 -  ((10*8) /2) + x, ySz/2 - 4 + y, "No message");
+  //display.drawMyFmt(x + 16 , y + 16,bite);
 }
 
-drawScreen frames[3] = {&drawFrame1,&drawFrame2,drawFrame3};
-int numbFrames = 3;
+void drawNotifFrame(int x, int y, int a) {
+  display.drawString(xSz/2 - 8 -  ((8*8) /2) + x, ySz/2 - 4 + y, "Call me?");
+}
+
+void drawAckFrame(int x, int y, int a) {
+  
+}
+
+drawScreen frames[4] = {&drawWeatherFrame,&drawQuoteFrame,drawMessageFrame,&drawNotifFrame};
+int numbFrames = 4;
 int dispFrameIndex = 0;
 
 void drawMarkers() {
@@ -174,16 +273,13 @@ void drawMarkers() {
   display.setPixel(xSz-4,startPoint+dispFrameIndex*(9)+4);
 }
 
-void switchScreen(bool down) {
-  drawScreen s1,s2;
+void switchScreen(drawScreen s1, drawScreen s2,bool down) {
   if(down) {
-    s1 = frames[dispFrameIndex];
-    s2 = frames[dispFrameIndex-1];
     dispFrameIndex--;
     for(int i = 0; i <= 64; i+=4) {
       display.clear();
-      s1(0,i); // screen shown,
-      s2(0,i-64); // screen appearing;
+      s1(0,i,0); // screen shown,
+      s2(0,i-64,0); // screen appearing;
       drawMarkers();
       display.display();
     }
@@ -193,8 +289,8 @@ void switchScreen(bool down) {
     dispFrameIndex++;
     for(int i = 0; i <= 64; i+=4) {
       display.clear();
-      s1(0,-i); // screen shown,
-      s2(0,-i+64); // screen appearing;
+      s1(0,-i,0); // screen shown,
+      s2(0,-i+64,0); // screen appearing;
       drawMarkers();
       display.display();
     }
@@ -228,7 +324,11 @@ void setup() {
   display.init();
   display.clear();
 
-  /*
+  // Get Unique identifier
+  WiFi.macAddress(mac);
+  //Serial.printf("id: %02x:%02x:%02x:%02x:%02x:%02x\r\n",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+  
+#if true
   // Preemption if button 2 and 3 are pushed
   bool configured = false;
   int gpio12State = digitalRead(12);
@@ -276,7 +376,7 @@ void setup() {
     int retries = 0;
     //Serial.println("Connect to " + ssid + " with " + pass);
     WiFi.begin(ssid.c_str(), pass.c_str());
-    while ((WiFi.status() != WL_CONNECTED) and (retries < 20) ) {
+    while ((WiFi.status() != WL_CONNECTED) and (retries < CONNECTION_RETRIES) ) {
       delay(250);
       display.clear();
       display.drawString((xSz/2) - (9*8)/2, (ySz/2) - 4, "conneting");
@@ -296,7 +396,7 @@ void setup() {
       display.display();
       retries++;
     }
-    if(retries >= 20) {
+    if(retries >= CONNECTION_RETRIES) {
       //Serial.println("Could not connect");
       display.clear();
       display.drawString((xSz/2) - (10*8)/2, (ySz/2) - 4, "No network");
@@ -313,29 +413,30 @@ void setup() {
       display.clear();
       display.drawString((xSz/2) - (9*8)/2, (ySz/2) - 4, "Connected");
       display.display();
-      delay(1000);
+  
+      loadAll();
+      
       display.clear();
-      drawFrame1(0,0);
+      frames[dispFrameIndex](0,0,0);
       dispFrameIndex = 0;
       drawMarkers();
       display.display();
     }
   }
 
-  */
-
-    //Serial.println("Got connection");
-    display.clear();
-    display.drawString((xSz/2) - (9*8)/2, (ySz/2) - 4, "Connected");
-    display.display();
-    delay(1000);
-    display.clear();
-    state = RUN;
-    drawFrame1(0,0);
-    dispFrameIndex = 0;
-    drawMarkers();
-    display.display();
-
+#else 
+  //Serial.println("Got connection");
+  display.clear();
+  display.drawString((xSz/2) - (9*8)/2, (ySz/2) - 4, "Connected");
+  display.display();
+  delay(1000);
+  display.clear();
+  state = RUN;
+  drawFrame1(0,0);
+  dispFrameIndex = 0;
+  drawMarkers();
+  display.display();
+#endif
 }
 
 void loop() {
@@ -349,17 +450,17 @@ void loop() {
   case RUN:
     delay(500);
     Serial.println("Loop");
-    if(gpio0Clicked) {  // We clicked UP screens goes DOWN
+    if(bEvent == UP_BUTTON) {  // We clicked UP screens goes DOWN
       if(dispFrameIndex != 0) {
-        switchScreen(true);
+        switchScreen(frames[dispFrameIndex],frames[dispFrameIndex-1],true);
       }
-      gpio0Clicked = false;
+      bEvent = NONE;
     }
-    if(gpio12Clicked) { // We clicled DOWN screens goes UP
+    if(bEvent == DOWN_BUTTON) { // We clicled DOWN screens goes UP
       if(dispFrameIndex != (numbFrames-1)) {
-        switchScreen(false);
+        switchScreen(frames[dispFrameIndex],frames[dispFrameIndex+1],false);
       }
-      gpio12Clicked = false;
+      bEvent = NONE;
     }
     break;
   }
