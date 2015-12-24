@@ -11,16 +11,24 @@
 // STATE
 typedef enum {
   CONF,
-  RUN,
+  MENU,
+  QUOTE,
+  BRIEFS,
+  MESSAGE,
 } stateMachine;
 stateMachine state;
 
 // Briefs
+#define BRIEFS_SZ 512
 int nBriefs = 0;
-char briefs[512];
+int currBrief = 0;
+char briefs[BRIEFS_SZ];
 
 // Quote
-char quote[64];
+#define QUOTE_SZ 128
+int nQuoteFrames = 0;
+int currQuote = 0;
+char quote[QUOTE_SZ];
 
 // Buttons 
 typedef enum {
@@ -165,7 +173,7 @@ int loadContent(const char *request, char* b, int bMax) {
     return -1;
   }
   // Forge a request with the request type and the mac address which is our unique identifier
-  client.printf("{\"request\":\"%s\",\"id\":\"%02x:%02x:%02x:%02x:%02x:%02x\"}",request,mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+  client.printf("{\"request\":\"%s\",\"id\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"szMax\":120,\"spaceFont\":8}",request,mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
   // uint32_t t0 = ESP.getCycleCount();
   while(bCurr < bMax) {
     if(client.available()>0) {
@@ -188,9 +196,17 @@ int loadContent(const char *request, char* b, int bMax) {
 
 void loadQuote(void) {
   int contentSz = loadContent("quote",content,contentMaxSz);
-  if((contentSz > 0) && (contentSz<64)) {
+  if((contentSz > 0) && (contentSz<QUOTE_SZ)) {
     strncpy(quote,content,contentSz);
     quote[contentSz] = '\0';
+    nQuoteFrames = 0;
+    for(int i =0; i< strlen(quote); i++) {
+      // The quote screens are separated by semicolons
+      if(quote[i] == ';')
+        nQuoteFrames++;
+    }
+    Serial.println(quote);
+    Serial.println(nQuoteFrames);
   } else {
     Serial.println("Error getting quote");
   }
@@ -198,15 +214,17 @@ void loadQuote(void) {
 
 void loadBriefs(void) {
   int contentSz = loadContent("briefs",content,contentMaxSz);
-  if((contentSz > 0) && (contentSz<512)) {
+  if((contentSz > 0) && (contentSz<BRIEFS_SZ)) {
     strncpy(briefs,content,contentSz);
     briefs[contentSz] = '\0';
     nBriefs = 0;
     for(int i =0; i< strlen(briefs); i++) {
-      // The briefs are separated by semicolons
+      // The briefs screens are separated by semicolons
       if(briefs[i] = ';')
         nBriefs++;
     }
+    Serial.println(briefs);
+    Serial.println(nBriefs);
   } else {
     Serial.println("Error getting briefs");
   }
@@ -218,47 +236,147 @@ void loadAll(void) {
   loadBriefs();
 }
 
-// ====== Display stuffs ======
+// ====== Screens =======
 
 typedef void (*drawScreen)(int x, int y, int a);
 
-void drawWeatherFrame(int x,int y, int a) {
+void drawWeatherMenuFrame(int x,int y, int a) {
   display.drawString(xSz/2 - 8 -  ((7*8) /2) + x, ySz/2 - 4 + y, "Wheater");
   //display.drawMyFmt(x + 16 , y + 16,bite);
 }
 
-void drawQuoteFrame(int x, int y, int a) {
-  int l = strlen(quote) * 8;
-  int nLines = l / 112;
-  int restLines = l % 112;
-  int totaLines = nLines + (restLines!=0)?1:0;
-  int j = 0;
-  for( int i = 0; i< nLines; i++) {
-    char buff[15];
-    strncpy(buff,quote+j,15);
-    j+=15;
-    display.drawString(0 + x , ySz/2 - (totaLines*8/2) + i*8 + y, buff);
-  }
-  if(restLines !=0) {
-    display.drawString(xSz/2 - restLines/2 + x , ySz/2 - (totaLines*8/2)  + nLines * 8 + y, quote+j);
-  }
+void drawQuoteMenuFrame(int x, int y, int a) {
+  display.drawString(xSz/2 - 8 -  ((5*8) /2) + x, ySz/2 - 4 + y, "Quote");
   //display.drawMyFmt(x + 16 , y + 16,bite);
 }
 
-void drawMessageFrame(int x, int y, int a) {
+void drawQuoteFrame(int x, int y, int a) {
+  int segmBegin = 0;
+  int lastBegin = 0;
+  int commaToFind = a + 1;
+  int yLines = 0;
+  // Find the right segment
+  for(int i = 0; i < strlen(quote); i++)  {
+    // Each time we get a : this is a new line
+    if(quote[i] == ':') {
+      yLines++;
+    }
+    // Each time we get a ; this is a new segment starting
+    if(quote[i] == ';') {
+      commaToFind--;
+      if(commaToFind == 0) {
+        // We found the right segment save index
+        lastBegin = segmBegin;
+        break;
+      } else {
+        // not the right segment reset yLines
+        segmBegin = i + 1;
+        yLines = 0;
+      }
+    }
+  }
+
+  int yTextSize = yLines * 8;
+  int currQuoteSize = 0;
+  int lineIndex = 0;
+  for(int i = lastBegin; i < strlen(quote); i++) {
+    // We encounter a ";"
+    if(quote[i] != ';') {
+      if(quote[i] == ':') {
+        char subQuote[15];
+        strncpy(subQuote,quote+lastBegin,currQuoteSize);
+        subQuote[currQuoteSize] = 0;
+        //Serial.println(subQuote);
+        int lx = (xSz-8)/2 - ((currQuoteSize*8)/2);
+        int ly = ySz/2  - yTextSize/2 + lineIndex*8;
+        display.drawString(lx + x, ly + y,subQuote);
+        lastBegin += currQuoteSize + 1;
+        currQuoteSize = 0;
+        lineIndex++;
+      } else {
+        currQuoteSize++;
+      }
+    } else {
+      break;
+    }
+  }
+}
+
+void drawMessageMenuFrame(int x, int y, int a) {
   display.drawString(xSz/2 - 8 -  ((10*8) /2) + x, ySz/2 - 4 + y, "No message");
   //display.drawMyFmt(x + 16 , y + 16,bite);
 }
 
-void drawNotifFrame(int x, int y, int a) {
+void drawBriefsMenuFrame(int x, int y, int a) {
   display.drawString(xSz/2 - 8 -  ((8*8) /2) + x, ySz/2 - 4 + y, "Call me?");
+}
+
+
+void drawBriefsFrame(int x, int y, int a) {
+  int segmBegin = 0;
+  int lastBegin = 0;
+  int commaToFind = a + 1;
+  int yLines = 0;
+  // Find the right segment
+  Serial.printf("briefs a = %d\r\n",a);
+  for(int i = 0; i < strlen(briefs); i++)  {
+    // Each time we get a : this is a new line
+    if(briefs[i] == ':') {
+      yLines++;
+    }
+    // Each time we get a ; this is a new segment starting
+    if(briefs[i] == ';') {
+      commaToFind--;
+      if(commaToFind == 0) {
+        // We found the right segment save index
+        lastBegin = segmBegin;
+        break;
+      } else {
+        // not the right segment reset yLines
+        segmBegin = i + 1;
+        yLines = 0;
+      }
+    }
+  }
+
+  Serial.printf("briefs lastBegin = %d\r\n",lastBegin);
+  Serial.printf("briefs yLines = %d\r\n",yLines);
+
+  int yTextSize = yLines * 8;
+  int currBriefSize = 0;
+  int lineIndex = 0;
+  for(int i = lastBegin; i < strlen(briefs); i++) {
+    // We encounter a ";"
+    if(briefs[i] != ';') {
+      if(briefs[i] == ':') {
+        char subBrief[15];
+        strncpy(subBrief,briefs+lastBegin,currBriefSize);
+        subBrief[currBriefSize] = 0;
+        //Serial.println(subQuote);
+        int lx = (xSz-8)/2 - ((currBriefSize*8)/2);
+        int ly = ySz/2  - yTextSize/2 + lineIndex*8;
+        display.drawString(lx + x, ly + y,subBrief);
+        lastBegin += currBriefSize + 1;
+        currBriefSize = 0;
+        lineIndex++;
+      } else {
+        currBriefSize++;
+      }
+    } else {
+      break;
+    }
+  }
 }
 
 void drawAckFrame(int x, int y, int a) {
   
 }
 
-drawScreen frames[4] = {&drawWeatherFrame,&drawQuoteFrame,drawMessageFrame,&drawNotifFrame};
+void drawMenu(int x, int y, int a) {
+  
+}
+
+drawScreen frames[4] = {&drawWeatherMenuFrame,&drawQuoteMenuFrame,drawMessageMenuFrame,&drawBriefsMenuFrame};
 int numbFrames = 4;
 int dispFrameIndex = 0;
 
@@ -273,28 +391,50 @@ void drawMarkers() {
   display.setPixel(xSz-4,startPoint+dispFrameIndex*(9)+4);
 }
 
-void switchScreen(drawScreen s1, drawScreen s2,bool down) {
-  if(down) {
-    dispFrameIndex--;
-    for(int i = 0; i <= 64; i+=4) {
-      display.clear();
-      s1(0,i,0); // screen shown,
-      s2(0,i-64,0); // screen appearing;
-      drawMarkers();
-      display.display();
-    }
-  } else {
-    s1 = frames[dispFrameIndex];
-    s2 = frames[dispFrameIndex+1];
-    dispFrameIndex++;
-    for(int i = 0; i <= 64; i+=4) {
-      display.clear();
-      s1(0,-i,0); // screen shown,
-      s2(0,-i+64,0); // screen appearing;
-      drawMarkers();
-      display.display();
-    }
+typedef enum {
+  DOWN,
+  UP,
+  LEFT,
+  RIGHT,
+} scrollWay;
 
+void switchScreen(drawScreen s1, int a1, drawScreen s2, int a2,scrollWay way) {
+  if(way == DOWN) {
+    if(state == MENU)
+      dispFrameIndex--;
+    for(int i = 0; i <= 64; i+=4) {
+      display.clear();
+      s1(0,i,a1); // screen shown,
+      s2(0,i-64,a2); // screen appearing;
+      drawMarkers();
+      display.display();
+    }
+  } else if(way == UP) {
+    if(state == MENU)
+      dispFrameIndex++;
+    for(int i = 0; i <= 64; i+=4) {
+      display.clear();
+      s1(0,-i,a1); // screen shown,
+      s2(0,-i+64,a2); // screen appearing;
+      drawMarkers();
+      display.display();
+    }
+  } else if(way == LEFT) {
+    for(int i = 0; i <= 128; i+=4) {
+      display.clear();
+      s1(i,0,a1); // screen shown,
+      s2(i-128,0,a2); // screen appearing;
+      drawMarkers();
+      display.display();
+    } 
+  } else if(way == RIGHT) {
+    for(int i = 0; i <= 128; i+=4) {
+      display.clear();
+      s1(-i,0,a1); // screen shown,
+      s2(-i+128,0,a2); // screen appearing;
+      drawMarkers();
+      display.display();
+    } 
   }
   drawMarkers();
   display.display();
@@ -372,7 +512,7 @@ void setup() {
     server.begin();
   } else {
     // Run App
-    state = RUN;
+    state = MENU;
     int retries = 0;
     //Serial.println("Connect to " + ssid + " with " + pass);
     WiFi.begin(ssid.c_str(), pass.c_str());
@@ -400,12 +540,17 @@ void setup() {
       //Serial.println("Could not connect");
       display.clear();
       display.drawString((xSz/2) - (10*8)/2, (ySz/2) - 4, "No network");
-      display.drawString((xSz/2) - (10*8)/2, (ySz/2) + 4, "Run Config");
+      display.drawString((xSz/2) - (8*8)/2, (ySz/2) + 4, "maintain UP");
+      display.drawString((xSz/2) - (13*8)/2, (ySz/2) + 8, "to run config");
       display.display();
-      // Reset
-      storeSsid("");
-      storePassword("");
-      EEPROM.commit();
+      delay(2000);
+      if(gpio12State == 0) {
+        // Reset
+        storeSsid("");
+        storePassword("");
+        EEPROM.commit();
+        ESP.reset();
+      }
       delay(5000);
       ESP.reset();
     } else {
@@ -417,8 +562,8 @@ void setup() {
       loadAll();
       
       display.clear();
-      frames[dispFrameIndex](0,0,0);
       dispFrameIndex = 0;
+      frames[dispFrameIndex](0,0,0);
       drawMarkers();
       display.display();
     }
@@ -447,22 +592,74 @@ void loop() {
     server.handleClient();
     break;
   default:
-  case RUN:
+  case MENU:
     delay(500);
-    Serial.println("Loop");
+    Serial.println("Menu LOOP");
     if(bEvent == UP_BUTTON) {  // We clicked UP screens goes DOWN
       if(dispFrameIndex != 0) {
-        switchScreen(frames[dispFrameIndex],frames[dispFrameIndex-1],true);
+        switchScreen(frames[dispFrameIndex],0,frames[dispFrameIndex-1],0,DOWN);
       }
-      bEvent = NONE;
     }
     if(bEvent == DOWN_BUTTON) { // We clicled DOWN screens goes UP
       if(dispFrameIndex != (numbFrames-1)) {
-        switchScreen(frames[dispFrameIndex],frames[dispFrameIndex+1],false);
+        switchScreen(frames[dispFrameIndex],0,frames[dispFrameIndex+1],0,UP);
       }
-      bEvent = NONE;
     }
+    if(bEvent == ENTER_BUTTON) {
+      if(dispFrameIndex == 1) {
+        currQuote = 0;
+        switchScreen(frames[dispFrameIndex],0,drawQuoteFrame,currQuote,RIGHT);
+        state = QUOTE;
+      } else if(dispFrameIndex == 3) {
+        currBrief = 0;
+        switchScreen(frames[dispFrameIndex],0,drawBriefsFrame,currBrief,RIGHT);
+        state = BRIEFS;
+      }
+    }
+    bEvent = NONE;
     break;
+  case QUOTE:
+    delay(500);
+    Serial.println("Quote LOOP");
+    if(bEvent == UP_BUTTON) {  // We clicked UP screens goes DOWN
+      if(currQuote != 0) {
+        switchScreen(drawQuoteFrame,currQuote,drawQuoteFrame,currQuote-1,DOWN);
+        currQuote--;
+      }
+    }
+    if(bEvent == DOWN_BUTTON) { // We clicled DOWN screens goes UP
+      if(currQuote != (nQuoteFrames-1)) {
+        switchScreen(drawQuoteFrame,currQuote,drawQuoteFrame,currQuote+1,UP);
+        currQuote++;
+      }
+    }
+    if(bEvent == ENTER_BUTTON) {
+        switchScreen(drawQuoteFrame,currQuote,frames[dispFrameIndex],0,LEFT);
+        state = MENU;
+    }
+    bEvent = NONE;
+    break;
+  case BRIEFS:
+    delay(500);
+    Serial.println("Briefs LOOP");
+    if(bEvent == UP_BUTTON) {  // We clicked UP screens goes DOWN
+      if(currQuote != 0) {
+        switchScreen(drawBriefsFrame,currBrief,drawBriefsFrame,currBrief-1,DOWN);
+        currBrief--;
+      }
+    }
+    if(bEvent == DOWN_BUTTON) { // We clicled DOWN screens goes UP
+      if(currQuote != (nQuoteFrames-1)) {
+        switchScreen(drawBriefsFrame,currBrief,drawBriefsFrame,currBrief+1,UP);
+        currBrief++;
+      }
+    }
+    if(bEvent == ENTER_BUTTON) {
+        switchScreen(drawBriefsFrame,currBrief,frames[dispFrameIndex],0,LEFT);
+        state = MENU;
+    }
+    bEvent = NONE;
+    break; 
   }
 
   /*

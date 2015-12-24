@@ -3,6 +3,29 @@
 import SocketServer
 import json
 
+def splitSentence(maxLines,maxSz,fontSpace,text):
+	sText = text.split(" ")
+	oText = ""
+	lines = 0;
+	l = 0
+	i = 0
+	while i < len(sText):
+		if ((l + (len(sText[i]) * fontSpace)) > maxSz):
+			oText = oText.strip()
+			oText += ":"
+			l = 0;
+			lines += 1
+			if(lines > maxLines):
+			    oText += ";"
+			    lines = 0;
+		else:
+			oText += sText[i] + " "
+			l += (len(sText[i])+1) * fontSpace 
+			i += 1
+			if i == len(sText):
+			    oText = oText.strip()+":"
+	return oText+";"
+
 class MyTCPHandler(SocketServer.BaseRequestHandler):
 
     def handle(self):
@@ -13,14 +36,18 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
 		data = json.loads(jdata)
 		request = data["request"]
 		ident = data["id"]
+		maxSz = data["szMax"]
+		spaceFont = data["spaceFont"]
 		response = ""
 		print(ident + " try loading " + request)
 		if request == "quote":
-			response = "zagett is feeling proud to introduce you the zaza\r"
+			rawResponse = "zagett is feeling proud to introduce you the zaza, the best way to keep in touch with our bests client!!!"
+			response = splitSentence(4,maxSz,spaceFont,rawResponse)+'\r'
 		elif request == "briefs":
-			response = "Brief1;Brief2;Brief3;Brief4;\r"
+			response = "Brief1:;Brief2:;Brief3:;Brief4:;\r"
 		else:
 			reponse = "\r"
+		print("response: " + response)
 		self.request.sendall(response)
 
 if __name__ == "__main__":
