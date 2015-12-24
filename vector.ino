@@ -186,11 +186,12 @@ int loadContent(const char *request, char* b, int bMax) {
     }
   }
   for(int i = 0; i< bCurr; i++) {
-    Serial.printf("%02x",b[i]);
+    Serial.printf("%c",b[i]);
     if(((i%16) == 0) && (i!= 0)) {
       Serial.printf("\r\n");
     }
   }
+  Serial.printf("\r\n");
   return bCurr;
 }
 
@@ -220,7 +221,7 @@ void loadBriefs(void) {
     nBriefs = 0;
     for(int i =0; i< strlen(briefs); i++) {
       // The briefs screens are separated by semicolons
-      if(briefs[i] = ';')
+      if(briefs[i] == ';')
         nBriefs++;
     }
     Serial.println(briefs);
@@ -540,8 +541,8 @@ void setup() {
       //Serial.println("Could not connect");
       display.clear();
       display.drawString((xSz/2) - (10*8)/2, (ySz/2) - 4, "No network");
-      display.drawString((xSz/2) - (8*8)/2, (ySz/2) + 4, "maintain UP");
-      display.drawString((xSz/2) - (13*8)/2, (ySz/2) + 8, "to run config");
+      display.drawString((xSz/2) - (11*8)/2, (ySz/2) + 4, "maintain UP");
+      display.drawString((xSz/2) - (13*8)/2, (ySz/2) + 12, "to run config");
       display.display();
       delay(2000);
       if(gpio12State == 0) {
@@ -643,13 +644,13 @@ void loop() {
     delay(500);
     Serial.println("Briefs LOOP");
     if(bEvent == UP_BUTTON) {  // We clicked UP screens goes DOWN
-      if(currQuote != 0) {
+      if(currBrief != 0) {
         switchScreen(drawBriefsFrame,currBrief,drawBriefsFrame,currBrief-1,DOWN);
         currBrief--;
       }
     }
     if(bEvent == DOWN_BUTTON) { // We clicled DOWN screens goes UP
-      if(currQuote != (nQuoteFrames-1)) {
+      if(currBrief != (nBriefs-1)) {
         switchScreen(drawBriefsFrame,currBrief,drawBriefsFrame,currBrief+1,UP);
         currBrief++;
       }
