@@ -36,15 +36,19 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
 		data = json.loads(jdata)
 		request = data["request"]
 		ident = data["id"]
-		maxSz = data["szMax"]
-		spaceFont = data["spaceFont"]
 		response = ""
 		print(ident + " try loading " + request)
 		if request == "quote":
+			maxSz = data["szMax"]
+			spaceFont = data["spaceFont"]
 			rawResponse = "zagett is feeling proud to introduce you the zaza, the best way to keep in touch with our bests client!!!"
 			response = splitSentence(4,maxSz,spaceFont,rawResponse)+'\r'
 		elif request == "briefs":
 			response = "Brief1:;Brief2:;Brief3:;Brief4:;\r"
+		elif request == "postBrief":
+			idBrief = data["idBrief"]
+			print("gotBrief :" + str(idBrief))
+			response = "OK\r"
 		else:
 			reponse = "\r"
 		print("response: " + response)

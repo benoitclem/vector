@@ -15,6 +15,7 @@ typedef enum {
   QUOTE,
   BRIEFS,
   MESSAGE,
+  VALIDATE,
 } stateMachine;
 stateMachine state;
 
@@ -164,7 +165,7 @@ char content[512];
 int contentCurr = 0;
 int contentMaxSz = 512;
 
-int loadContent(const char *request, char* b, int bMax) {
+int requestContent(const char *request, char* b, int bMax) {
   int bCurr = 0;
   // Load content here.
   WiFiClient client;
@@ -173,7 +174,11 @@ int loadContent(const char *request, char* b, int bMax) {
     return -1;
   }
   // Forge a request with the request type and the mac address which is our unique identifier
-  client.printf("{\"request\":\"%s\",\"id\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"szMax\":120,\"spaceFont\":8}",request,mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+  if(!strcmp(request,"postBrief")) {
+    client.printf("{\"request\":\"%s\",\"id\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"idBrief\":%d}",request,mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],b[0]);
+  } else {
+    client.printf("{\"request\":\"%s\",\"id\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"szMax\":120,\"spaceFont\":8}",request,mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+  }
   // uint32_t t0 = ESP.getCycleCount();
   while(bCurr < bMax) {
     if(client.available()>0) {
@@ -196,7 +201,7 @@ int loadContent(const char *request, char* b, int bMax) {
 }
 
 void loadQuote(void) {
-  int contentSz = loadContent("quote",content,contentMaxSz);
+  int contentSz = requestContent("quote",content,contentMaxSz);
   if((contentSz > 0) && (contentSz<QUOTE_SZ)) {
     strncpy(quote,content,contentSz);
     quote[contentSz] = '\0';
@@ -214,7 +219,7 @@ void loadQuote(void) {
 }
 
 void loadBriefs(void) {
-  int contentSz = loadContent("briefs",content,contentMaxSz);
+  int contentSz = requestContent("briefs",content,contentMaxSz);
   if((contentSz > 0) && (contentSz<BRIEFS_SZ)) {
     strncpy(briefs,content,contentSz);
     briefs[contentSz] = '\0';
@@ -229,6 +234,12 @@ void loadBriefs(void) {
   } else {
     Serial.println("Error getting briefs");
   }
+}
+
+void postBrief(int nBrief) {
+  content[0] = nBrief;
+  int contentSz = requestContent("postBrief",content,contentMaxSz);
+  Serial.println(contentSz);
 }
 
 void loadAll(void) {
@@ -369,12 +380,33 @@ void drawBriefsFrame(int x, int y, int a) {
   }
 }
 
-void drawAckFrame(int x, int y, int a) {
-  
-}
+bool validate = true;
 
-void drawMenu(int x, int y, int a) {
+void drawValidateFrame(int x, int y, int a) {
+  // Pas de deplacement y dans cette frame
+  display.drawString(xSz/2 - ((4*8)/2) + x, ySz/2 - 4,"Send");
+  display.drawString(xSz/2 - ((6*8)/2) + x, ySz/2 + 4 ,"Brief?");
+  display.drawString(xSz - 25 + x, ySz/3 - 4, "OUI");
+  display.drawString(xSz - 25 + x, ySz-(ySz/3) - 4, "NON");
   
+  int yRef;
+  if(a == 0)  // NON
+    yRef = ySz-(ySz/3) - 1;
+  else
+    yRef = ySz/3 - 1;
+
+  // Horizontal (x)
+  for(int i = 0; i<=((3*8)+2); i++){
+    display.setPixel(xSz - 25 - 1 + x + i,yRef - 4 - 1 + y);
+    display.setPixel(xSz - 25 - 1 + x + i,yRef + 4 + 1 + y);
+  }
+  // Vertical (y)
+  for(int i = 0; i<=((1*8)+2); i++){
+    display.setPixel(xSz - 25 - 1 + x,yRef - 4 - 1 + i + y);
+    display.setPixel(xSz - 25 - 1 + 3*8 + 1 + x,yRef - 4 - 1 + i + y);
+  }
+  
+
 }
 
 drawScreen frames[4] = {&drawWeatherMenuFrame,&drawQuoteMenuFrame,drawMessageMenuFrame,&drawBriefsMenuFrame};
@@ -407,7 +439,8 @@ void switchScreen(drawScreen s1, int a1, drawScreen s2, int a2,scrollWay way) {
       display.clear();
       s1(0,i,a1); // screen shown,
       s2(0,i-64,a2); // screen appearing;
-      drawMarkers();
+      if(state != VALIDATE)
+        drawMarkers();
       display.display();
     }
   } else if(way == UP) {
@@ -417,7 +450,8 @@ void switchScreen(drawScreen s1, int a1, drawScreen s2, int a2,scrollWay way) {
       display.clear();
       s1(0,-i,a1); // screen shown,
       s2(0,-i+64,a2); // screen appearing;
-      drawMarkers();
+      if(state != VALIDATE)
+        drawMarkers();
       display.display();
     }
   } else if(way == LEFT) {
@@ -425,7 +459,8 @@ void switchScreen(drawScreen s1, int a1, drawScreen s2, int a2,scrollWay way) {
       display.clear();
       s1(i,0,a1); // screen shown,
       s2(i-128,0,a2); // screen appearing;
-      drawMarkers();
+      if(state != VALIDATE)
+        drawMarkers();
       display.display();
     } 
   } else if(way == RIGHT) {
@@ -433,11 +468,13 @@ void switchScreen(drawScreen s1, int a1, drawScreen s2, int a2,scrollWay way) {
       display.clear();
       s1(-i,0,a1); // screen shown,
       s2(-i+128,0,a2); // screen appearing;
-      drawMarkers();
+      if(state != VALIDATE)
+        drawMarkers();
       display.display();
     } 
   }
-  drawMarkers();
+  if(state != VALIDATE)
+    drawMarkers();
   display.display();
 }
 
@@ -545,7 +582,8 @@ void setup() {
       display.drawString((xSz/2) - (13*8)/2, (ySz/2) + 12, "to run config");
       display.display();
       delay(2000);
-      if(gpio12State == 0) {
+      int gpio0State = digitalRead(0);
+      if(gpio0State == 0) {
         // Reset
         storeSsid("");
         storePassword("");
@@ -656,11 +694,37 @@ void loop() {
       }
     }
     if(bEvent == ENTER_BUTTON) {
-        switchScreen(drawBriefsFrame,currBrief,frames[dispFrameIndex],0,LEFT);
-        state = MENU;
+        state = VALIDATE;
+        switchScreen(drawBriefsFrame,currBrief,drawValidateFrame,0,RIGHT);
+        validate = false;
     }
     bEvent = NONE;
-    break; 
+    break;
+  case VALIDATE:
+    delay(500);
+    Serial.println("Validate LOOP");
+    if(bEvent == UP_BUTTON) {  // We clicked UP screens goes DOWN
+      if(!validate) {
+        switchScreen(drawValidateFrame,0,drawValidateFrame,1,DOWN);
+        validate = true;
+      }
+    }
+    if(bEvent == DOWN_BUTTON) { // We clicled DOWN screens goes UP
+      if(validate) {
+        switchScreen(drawValidateFrame,1,drawValidateFrame,0,UP);
+        validate = false;
+      }
+    }
+    if(bEvent == ENTER_BUTTON) {
+        int currVal = (validate)?1:0;
+        state = MENU;
+        if(currVal == 1)
+          postBrief(currBrief);
+        // Maybe some screen that shows message is gone
+        switchScreen(drawValidateFrame,currVal,frames[dispFrameIndex],0,LEFT);
+    }
+    bEvent = NONE;
+    break;
   }
 
   /*
