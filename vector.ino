@@ -12,6 +12,7 @@
 // STATE
 typedef enum {
   CONF,
+  WELCOME,
   MENU,
   QUOTE,
   BRIEFS,
@@ -25,20 +26,20 @@ typedef struct _weatherData{
   char datehour[5];
   char idLogo;
   uint8_t night;
-  uint8_t temp;
+  int8_t temp;
 } weatherData;
-char wthData[8] = {28,12,15,15,36,1,1,23};
+char wthData[8] = {28,12,15,15,36,1,0,2};
 weatherData *wData = (weatherData*) &wthData;
 
 // Message
-#define MSG_SZ 128
+#define MSG_SZ 256
 int nMsgFrames = 0;
 int currMsg = 0;
 int msgStatus = 2; // 0 No messge, 1 Message read, 2 Message to read
 char message[MSG_SZ];
 
 // Quote
-#define QUOTE_SZ 128
+#define QUOTE_SZ 256
 int nQuoteFrames = 0;
 int currQuote = 0;
 char quote[QUOTE_SZ];
@@ -86,6 +87,7 @@ ESP8266WebServer server(80);
 int numSsid = -1;
 String ssid = "";
 String pass = "";
+String cname = "";
 
 // Screen
 SSD1306 display(0x3c, 5, 4);
@@ -122,38 +124,45 @@ void dumpEEPROM() {
   }
 }
 
+void store(int whereToStore, String strToStore) {
+  EEPROM.write(whereToStore,strToStore.length());
+  for(int i = 0; i< strToStore.length(); i ++) 
+    EEPROM.write(whereToStore+i+1,strToStore[i]);
+}
+
+void get(int whereToGet, String &strToGet) {
+  int n = int(EEPROM.read(whereToGet));
+  //Serial.printf("Thing to read is length of %d\r\n",n);
+  if((n != 0) && (n != 0xff)) {
+    for(int i = 0; i<n; i++) {
+      strToGet += char(EEPROM.read(whereToGet+1+i));
+    }
+  } 
+}
+
 void storeSsid(String ssid) {
-  EEPROM.write(SSID_EEPROM_IDX,ssid.length());
-  for(int i = 0; i< ssid.length(); i ++) 
-    EEPROM.write(SSID_EEPROM_IDX+i+1,ssid[i]);
+  store(SSID_EEPROM_IDX,ssid);
 }
 
 void getSsid(String &ssid) {
-  int n = int(EEPROM.read(SSID_EEPROM_IDX));
-  Serial.printf("ssid length %d\r\n",n);
-  if((n != 0) && (n != 0xff)) {
-    for(int i = 0; i<n; i++) {
-      ssid += char(EEPROM.read(SSID_EEPROM_IDX+1+i));
-    }
-  }
+  get(SSID_EEPROM_IDX,ssid);
 }
 
 void storePassword(String pwd) {
-  EEPROM.write(PASS_EEPROM_IDX,pwd.length());
-  for(int i = 0; i< pwd.length(); i ++) 
-    EEPROM.write(PASS_EEPROM_IDX+i+1,pwd[i]);  
+  store(PASS_EEPROM_IDX,pwd);
 }
 
 void getPassword(String &pwd) {
-  int n = int(EEPROM.read(PASS_EEPROM_IDX));
-  Serial.printf("pass length %d\r\n",n);
-  if((n != 0) && (n != 0xff)) {
-    for(int i = 0; i<n; i++) {
-      pwd += char(EEPROM.read(PASS_EEPROM_IDX+1+i));
-    }
-  }
+  get(PASS_EEPROM_IDX,pwd);
 }
 
+void storeName(String nme) {
+  store(NAME_EEPROM_IDX,nme);
+}
+
+void getName(String &nme) {
+  get(NAME_EEPROM_IDX,nme); 
+}
 // ==== Id Icon to Icon =====
 
 const char *idToIcon(int id, bool night){
@@ -166,9 +175,9 @@ const char *idToIcon(int id, bool night){
     break;
     case 2:
       if(night)
-        return mostlySunnyLogo;
-       else
         return mostlyMoonyLogo;
+      else
+        return mostlySunnyLogo;
       break;
     case 3:
     case 4:
@@ -194,24 +203,50 @@ const char *idToIcon(int id, bool night){
 }
 
 // ====== WIFI AP ======
+String styles = "<style>html{background-color:#ffcc33;color:#000;font-family:sans-serif;}body{text-align:center;margin:auto;position:relative;}div{position:absolute;top:0;bottom:0;left:0;right:0;margin:auto;width:100%;height:250px}form{line-height:40px;display:inline-block;text-align:left;}label,input,select{display:inline-block;width:150px;}input,select{border:1px solid black;background-color:#ffcc33;border-radius:5px;padding-left:8px;}#submit{width:50%;margin:auto;display:block;margin-top:30px;padding:0;height:17px;}</style>";
 
 void apHandleRoot() {
-  String str = "<html><h1>Please select your access point</h1><form method='get' action='config'><label>SSID: </label><select name='ssid' length=32>";
+  String qname;
+  getName(qname);
+  
+  String str = "<html>";
+  str += "<meta name='viewport' content='width=device-width, user-scalable=no'>";
+  str += styles;
+  str += "<div>";
+  str += "<h1>Please select your access point</h1>";
+  str += "<form method='get' action='config'>";
+  str += "<label for='name'>Name : </label>";
+  str += "<input name='name' value='" + qname +  "' id='name' length=16><br>";
+  str += "<label for='ssid'>SSID : </label>";
+  str += "<select name='ssid' id='ssid' length=32>";
   for(int i = 0; i<numSsid; i++) {
     str += "<option>" + WiFi.SSID(i);
   }
-  str += "</select><input name='pass' length=64><input type='submit'></form>";
+  str += "</select><br>";
+  str += "<label for='pass'>Password : </label>";
+  str += "<input name='pass' type='password'  id='pass' length=64><br>";
+  str += "<input type='submit' id='submit'>";
+  str += "</form>";
+  str += "</div>";
+  str += "</html>";
   server.send(200, "text/html", str);
   delay(100);
 }
 
 void apHandleConfig() {
+  String qname = server.arg("name");
   String qssid = server.arg("ssid");
   String qpass = server.arg("pass");
-  String str = "Thanks, your box will restart automatically now";
+  String str = "<html>";
+  str += styles;
+  str += "<div>";
+  str += "<h1>Thanks " + qname +" ,<br>your box will restart<br>automatically now</h1>";
+  str += "</div>";
+  str += "</html>";
   server.send(200, "text/html", str);
   delay(100);
-  Serial.println("Storing " + qssid + " " + qpass); 
+  Serial.println("Storing " + qssid + " " + qpass);
+  storeName(qname);
   storeSsid(qssid);
   storePassword(qpass);
   EEPROM.commit();
@@ -234,10 +269,14 @@ int requestContent(const char *request, char* b, int bMax) {
     return -1;
   }
   // Forge a request with the request type and the mac address which is our unique identifier
-  if(!strcmp(request,"wheather")) {
-    client.printf("{\"request\":\"%s\",\"id\":\"%02x:%02x:%02x:%02x:%02x:%02x\"}",request,mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],b[0]);
+  if(!strcmp(request,"name")) {
+    unsigned char qname[16];
+    cname.getBytes(qname,16);
+    client.printf("{\"request\":\"%s\",\"name\":\"%s\",\"id\":\"%02x:%02x:%02x:%02x:%02x:%02x\"}",request,qname,mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+  } else if(!strcmp(request,"wheather")) {
+    client.printf("{\"request\":\"%s\",\"id\":\"%02x:%02x:%02x:%02x:%02x:%02x\"}",request,mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
   } else if(!strcmp(request,"ackMsg")) {
-    client.printf("{\"request\":\"%s\",\"id\":\"%02x:%02x:%02x:%02x:%02x:%02x\"}",request,mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],b[0]);
+    client.printf("{\"request\":\"%s\",\"id\":\"%02x:%02x:%02x:%02x:%02x:%02x\"}",request,mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
   } else if(!strcmp(request,"postBrief")) {
     client.printf("{\"request\":\"%s\",\"id\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"idBrief\":%d}",request,mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],b[0]);
   } else {
@@ -264,8 +303,14 @@ int requestContent(const char *request, char* b, int bMax) {
   return bCurr;
 }
 
+void loadName(void) {
+  int contentSz = requestContent("name", content, contentMaxSz);
+  Serial.println(contentSz);
+}
+
 void loadWheather(void) {
   int contentSz = requestContent("wheather", content, contentMaxSz);
+  memcpy((char*)wthData,content,8);
   Serial.println(contentSz);
 }
 
@@ -337,6 +382,7 @@ void ackMessage(void) {
 
 void loadAll(void) {
   // Could do a signe request..
+  loadName();
   loadWheather();
   loadMessage();
   loadQuote();
@@ -404,13 +450,21 @@ typedef void (*drawScreen)(int x, int y, int a);
 
 void drawWeatherMenuFrame(int x,int y, int a) {
   int id = wData->idLogo;
-  bool night = wData->night;
+  bool night = wData->night == 1;
   const char *pLogo = idToIcon(id,night);
   display.drawMyFmt(0+x,y,pLogo);
   char buff[10];
+  // date : x Taille 8
+  sprintf(buff,"%02d/%02d\0",wData->datehour[0],wData->datehour[1]);
+  display.drawString(xSz/2 + x + 8, ySz/2 - 24 + y, buff);
+  // hour : x Taille 5
+  sprintf(buff,"%02d:%02d\0",wData->datehour[3],wData->datehour[4]);
+  display.drawString(xSz/2 + x + 8, ySz/2 - 16 + y, buff);
+  // Temp
   display.setFontScale2x2(true);
-  sprintf(buff,"%2dC  \n",wData->temp);
-  display.drawString(xSz/2 + x, ySz/2 - 8 +y,buff);
+  sprintf(buff,"%2dC\0",wData->temp);
+  //sprintf(buff,"%2dC\0",-2);
+  display.drawString(xSz/2 + x, ySz/2 +y,buff);
   display.setFontScale2x2(false);
   //display.drawString(xSz/2 - 8 -  ((7*8) /2) + x, ySz/2 - 4 + y, "Wheater");
   //display.drawMyFmt(x + 16 , y + 16,bite);
@@ -544,6 +598,15 @@ typedef enum {
   RIGHT,
 } scrollWay;
 
+void redrawScreen() {
+  if(state == MENU) {
+    display.clear();
+    frames[dispFrameIndex](0,0,0); // screen shown,
+    drawMarkers();
+    display.display();
+  }
+}
+
 void switchScreen(drawScreen s1, int a1, drawScreen s2, int a2,scrollWay way) {
   if(way == DOWN) {
     if(state == MENU) {
@@ -555,7 +618,7 @@ void switchScreen(drawScreen s1, int a1, drawScreen s2, int a2,scrollWay way) {
     } else if(state == BRIEFS) {
       currBrief--;
     }
-    for(int i = 0; i <= 64; i+=4) {
+    for(int i = 0; i <= 64; i+=8) {
       display.clear();
       s1(0,i,a1); // screen shown,
       s2(0,i-64,a2); // screen appearing;
@@ -572,7 +635,7 @@ void switchScreen(drawScreen s1, int a1, drawScreen s2, int a2,scrollWay way) {
     } else if(state == BRIEFS) {
       currBrief++;
     }
-    for(int i = 0; i <= 64; i+=4) {
+    for(int i = 0; i <= 64; i+=8) {
       display.clear();
       s1(0,-i,a1); // screen shown,
       s2(0,-i+64,a2); // screen appearing;
@@ -580,7 +643,7 @@ void switchScreen(drawScreen s1, int a1, drawScreen s2, int a2,scrollWay way) {
       display.display();
     }
   } else if(way == LEFT) {
-    for(int i = 0; i <= 128; i+=4) {
+    for(int i = 0; i <= 128; i+=8) {
       display.clear();
       s1(i,0,a1); // screen shown,
       s2(i-128,0,a2); // screen appearing;
@@ -588,7 +651,7 @@ void switchScreen(drawScreen s1, int a1, drawScreen s2, int a2,scrollWay way) {
       display.display();
     } 
   } else if(way == RIGHT) {
-    for(int i = 0; i <= 128; i+=4) {
+    for(int i = 0; i <= 128; i+=8) {
       display.clear();
       s1(-i,0,a1); // screen shown,
       s2(-i+128,0,a2); // screen appearing;
@@ -658,6 +721,7 @@ void setup() {
   } else {
     getSsid(ssid);
     getPassword(pass);
+    getName(cname);
     //Serial.println("Got Stored sid: " + ssid);
     //Serial.println("Gto Stored pass: " + pass);
     configured = (pass.length() != 0) &&(ssid.length() != 0);
@@ -693,7 +757,7 @@ void setup() {
     // Run App
     state = MENU;
     int retries = 0;
-    //Serial.println("Connect to " + ssid + " with " + pass);
+    Serial.println("Connect to " + ssid + " with " + pass);
     WiFi.begin(ssid.c_str(), pass.c_str());
     while ((WiFi.status() != WL_CONNECTED) and (retries < CONNECTION_RETRIES) ) {
       delay(250);
@@ -765,9 +829,13 @@ void setup() {
 #endif
 }
 
-#define LOOP_DELAY 500
+#define LOOP_DELAY 250
 
 int wLogoIndex = 0;
+int refreshWheatherCounter = 0;
+int refreshMessageCounter = 0;
+#define REFRESH_WHEATHER_VALUE 20
+#define REFRESH_MESSAGE_VALUE 40
 void loop() {
   // This 
   switch(state) {
@@ -775,16 +843,41 @@ void loop() {
     dnsServer.processNextRequest();
     server.handleClient();
     break;
+  case WELCOME:
+    
   default:
   case MENU:
     delay(LOOP_DELAY);
+    // Refresh contents
+    if(refreshWheatherCounter > REFRESH_WHEATHER_VALUE) {
+      Serial.printf("Request Wheather");
+      refreshWheatherCounter = 0;
+      loadWheather();
+      redrawScreen();
+    } else {
+      refreshWheatherCounter++;
+    }
+    // Refresh Messages
+    if(refreshMessageCounter > REFRESH_MESSAGE_VALUE) {
+      Serial.printf("Request Messages");
+      refreshMessageCounter = 0;
+      loadMessage();
+      redrawScreen();
+    } else {
+      refreshMessageCounter++;
+    }
+    // UI
     Serial.println("Menu LOOP");
     if(bEvent == UP_BUTTON) {  // We clicked UP screens goes DOWN
+      refreshWheatherCounter = 0; // This avoid to make request when using UI
+      refreshMessageCounter = 0;
       if(dispFrameIndex != 0) {
         switchScreen(frames[dispFrameIndex],0,frames[dispFrameIndex-1],0,DOWN);
       }
     }
     if(bEvent == DOWN_BUTTON) { // We clicled DOWN screens goes UP
+      refreshWheatherCounter = 0; // This avoid to make request when using UI
+      refreshMessageCounter = 0;
       if(dispFrameIndex != (numbFrames-1)) {
         switchScreen(frames[dispFrameIndex],0,frames[dispFrameIndex+1],0,UP);
       }
