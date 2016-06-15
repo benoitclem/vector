@@ -2,11 +2,24 @@
 # coding: utf8
 
 import SocketServer
-import urllib
+import urllib2
 import json
 from struct import pack 
 from datetime import datetime
 from dataHandler import dataHandler
+import socket
+import smtplib
+from email.MIMEMultipart import MIMEMultipart
+from email.MIMEText import MIMEText
+from threading import Thread
+from Queue import Queue
+from Queue import Empty
+
+q = Queue()
+# timeout in seconds
+timeout = 4
+socket.setdefaulttimeout(timeout)
+lastWeather = ""
 
 def splitSentence(maxLines,maxSz,fontSpace,text):
 	sText = text.split(" ")
@@ -31,10 +44,51 @@ def splitSentence(maxLines,maxSz,fontSpace,text):
 			    oText = oText.strip()+":"
 	return oText+";"
 
+def sendMail(text):
+	msg=MIMEMultipart()
+	msg['From']='zagett notifier'
+	msg['Subject']='Notification de nouveau brief'
+	msg.attach(MIMEText(text))
+
+	fromaddr = 'zagett.new.year@gmail.com'
+	toaddrs  = 'benoit.clem@gmail.com'
+
+	# Credentials (if needed)
+	username = 'zagett.new.year@gmail.com'
+	password = 'clem7,tiag'
+
+	# The actual mail send
+	server = smtplib.SMTP('smtp.gmail.com:587')
+	server.starttls()
+	server.login(username,password)
+	server.sendmail(fromaddr, toaddrs, msg.as_string())
+	server.quit()
+
+def postMail(text):
+	global q
+	print("post Mail: " + text)
+	q.put(text)
+
+def threadMail():
+	while True:
+		try:
+			text = q.get(timeout = 2)
+			print("Send Mail: " + text)
+			sendMail(text)
+		except Empty:
+			pass
+
 class MyTCPHandler(SocketServer.BaseRequestHandler):
 	dh = None
+
+	def server_bind(self):
+		self.socket.setsockopt(SOL_SOCKET, SO_REUSEADDR,SO_REUSEPORT, 1)
+		self.socket.bind(self.server_address)
+		self.socket.setblocking(0)
+
 	
 	def handle(self):
+		global lastWeather
 		# set the dh
 		if self.dh == None:
 			self.dh = dataHandler("data")
@@ -103,13 +157,14 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
 				print("- Client exists")
 				if request == "wheather":
 					print("- Request location from ip: " + str(addr))
-					locResponse = urllib.urlopen('http://api.ipinfodb.com/v3/ip-city/?key=%s&ip=%s&format=json' % (lKey,addr)).read()
+					#try:
+					locResponse = urllib2.urlopen('http://api.ipinfodb.com/v3/ip-city/?key=%s&ip=%s&format=json' % (lKey,addr)).read()
 					jlocResponse = json.loads(locResponse)
 					if jlocResponse["statusCode"] == "OK":
 						lat = float(jlocResponse["latitude"])
 						lon = float(jlocResponse["longitude"])
 						print("- Request weather for " + str(ident) + " location(" + str(lat) + ", " + str(lon) + ")")
-						wheaResponse = urllib.urlopen('http://api.openweathermap.org/data/2.5/weather?lat=%f&lon=%f&APPID=%s' % (lat,lon,wKey)).read()
+						wheaResponse = urllib2.urlopen('http://api.openweathermap.org/data/2.5/weather?lat=%f&lon=%f&APPID=%s' % (lat,lon,wKey)).read()
 						jWheaResponse = json.loads(wheaResponse)
 						try:
 							temp = jWheaResponse["main"]["temp"]-273.15
@@ -125,12 +180,19 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
 							print("- Temperature is " + str(temp) + "degC icon is " + str(iconId) + " and night is " + str(night))
 							response = pack("=BBBBBBBB",d.day,d.month,int(str(d.year)[2:4]),d.hour,d.minute,int(iconId),night,int(temp))
 							response += "\r"
+							lastWeather = response
 						except KeyError as e:
 							print("- !!! got key error");
 							print(e)
 							response = "OK\r"
 					else:
 						response = "OK\r"
+					"""
+					except e:
+						print(e)
+						print('Issue when fetching weather use last wheather')
+						response = lastWeather
+					"""
 				elif request == "quote":
 					maxSz = data["szMax"]
 					spaceFont = data["spaceFont"]
@@ -157,6 +219,7 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
 				elif request == "postBrief":
 					idBrief = data["idBrief"]
 					print("- gotBrief :" + str(idBrief))
+					postMail("Nouveau Brief " + str(idBrief) + " de " + ident)
 					response = "OK\r"
 				else:
 					# default
@@ -168,6 +231,10 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
 
 if __name__ == "__main__":
     HOST, PORT = "0.0.0.0", 3333
+
+    # Run Thread
+    mail = Thread(target=threadMail)
+    mail.start()
 
     # Create the server, binding to localhost on port 9999
     server = SocketServer.TCPServer((HOST, PORT), MyTCPHandler)

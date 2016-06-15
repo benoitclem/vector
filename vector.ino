@@ -11,7 +11,6 @@
 
 // STATE
 typedef enum {
-  CONF,
   WELCOME,
   MENU,
   QUOTE,
@@ -21,6 +20,13 @@ typedef enum {
 } stateMachine;
 stateMachine state;
 
+typedef enum {
+  LOGO,
+  GREETINGS,
+  CONF,
+} stateWelcomeType;
+stateWelcomeType stateWelcome;
+
 // Weather
 typedef struct _weatherData{
   char datehour[5];
@@ -28,7 +34,7 @@ typedef struct _weatherData{
   uint8_t night;
   int8_t temp;
 } weatherData;
-char wthData[8] = {28,12,15,15,36,1,0,2};
+char wthData[8] = {25,12,15,00,00,1,0,0};
 weatherData *wData = (weatherData*) &wthData;
 
 // Message
@@ -37,6 +43,11 @@ int nMsgFrames = 0;
 int currMsg = 0;
 int msgStatus = 2; // 0 No messge, 1 Message read, 2 Message to read
 char message[MSG_SZ];
+
+// Welcome
+int nWelcomeFrames = 0;
+int currWelcome = 0;
+char welcome[128];
 
 // Quote
 #define QUOTE_SZ 256
@@ -470,6 +481,24 @@ void drawWeatherMenuFrame(int x,int y, int a) {
   //display.drawMyFmt(x + 16 , y + 16,bite);
 }
 
+// ===== WELCOME =====
+
+void drawWelcomeFrame(int x, int y, int a) {
+  display.setFontScale2x2(true);
+  display.drawString((xSz/2) - (3*16) + x + 1 , (ySz/2) - 8 + y,"ZAGETT"); // plus 1 is because the font is not center in his spacing
+  display.setFontScale2x2(false);
+}
+
+void drawGreetingsFrame(int x, int y, int a) {
+  drawCenterTextFrame(x,y,welcome,a+1);
+}
+
+void drawConfigurationFrame(int x, int y, int a) {
+    // Show Wifi Configuration screen
+    display.drawMyFmt(32+x,0,setupLogo);
+    //display.drawMyFmt(32+x,y,wifiLogo);
+}
+
 // ====== QUOTE ======
 
 void drawQuoteMenuFrame(int x, int y, int a) {
@@ -547,7 +576,12 @@ void drawMarkers() {
 
   int nFrames = 0;
   int cFrame = 0;
-  if(state == MENU) {
+  if(state == WELCOME) {
+    if(stateWelcome == GREETINGS) {
+      nFrames = nWelcomeFrames;
+      cFrame = currWelcome;
+    }
+  } else if(state == MENU) {
     nFrames = numbFrames;
     cFrame = dispFrameIndex;
   } else if(state == QUOTE) {  
@@ -609,7 +643,11 @@ void redrawScreen() {
 
 void switchScreen(drawScreen s1, int a1, drawScreen s2, int a2,scrollWay way) {
   if(way == DOWN) {
-    if(state == MENU) {
+    if(state == WELCOME) {
+      if(stateWelcome == GREETINGS) {
+        currWelcome--;
+      }
+    } else if(state == MENU) {
       dispFrameIndex--;
     } else if(state == QUOTE) {
       currQuote--;
@@ -626,7 +664,11 @@ void switchScreen(drawScreen s1, int a1, drawScreen s2, int a2,scrollWay way) {
       display.display();
     }
   } else if(way == UP) {
-    if(state == MENU) {
+    if(state == WELCOME) {
+      if(stateWelcome == GREETINGS) {
+        currWelcome++;
+      }
+    } else if(state == MENU) {
       dispFrameIndex++;
     } else if(state == QUOTE) {
       currQuote++;
@@ -734,7 +776,14 @@ void setup() {
     //delay(100);
 
     // Run Configuration
-    state = CONF;
+    state = WELCOME;
+    stateWelcome = LOGO;
+    nWelcomeFrames = 1;
+    sprintf(welcome,"CHER CLIENT,:TOUTE L EQUIPE:ZAGETT  VOUS:PRESENTE SES:MEILLEURS VOEUX:;");
+
+    // Draw Logo
+    drawWelcomeFrame(0,0,0);
+    display.display();
 
     // Set AP ssid
     WiFi.softAP("zazap", "zagettpw");
@@ -742,12 +791,6 @@ void setup() {
 
     // Start dns capture
     dnsServer.start(DNS_PORT, "*", apIP);
-
-    // Show Wifi Configuration screen
-    display.drawMyFmt(0,0,setupLogo);
-    display.drawMyFmt(64,0,wifiLogo);
-    display.display();
-
     numSsid = WiFi.scanNetworks();
     
     server.on("/", apHandleRoot);
@@ -762,16 +805,19 @@ void setup() {
     while ((WiFi.status() != WL_CONNECTED) and (retries < CONNECTION_RETRIES) ) {
       delay(250);
       display.clear();
-      display.drawString((xSz/2) - (9*8)/2, (ySz/2) - 4, "conneting");
+      display.setFontScale2x2(true);
+      display.drawString((xSz/2) - (6*16)/2 + 1, (ySz/2) - 16,"ZAGETT");
+      display.setFontScale2x2(false);
+      display.drawString((xSz/2) - (10*8)/2, (ySz/2) , "connecting");
       switch((retries%3)+1) {
         case 1:
-          display.drawString((xSz/2) - (3*8)/2 , (ySz/2) + 4, ".");
+          display.drawString((xSz/2) - (3*8)/2 , (ySz/2) + 8, ".");
           break;
         case 2:
-          display.drawString((xSz/2) - (3*8)/2 , (ySz/2) + 4, "..");
+          display.drawString((xSz/2) - (3*8)/2 , (ySz/2) + 8, "..");
           break;
         case 3:
-          display.drawString((xSz/2) - (3*8)/2 , (ySz/2) + 4, "...");
+          display.drawString((xSz/2) - (3*8)/2 , (ySz/2) + 8, "...");
           break;
         default:
           break;
@@ -832,6 +878,7 @@ void setup() {
 #define LOOP_DELAY 250
 
 int wLogoIndex = 0;
+int welcomeCounter = 0;
 int refreshWheatherCounter = 0;
 int refreshMessageCounter = 0;
 #define REFRESH_WHEATHER_VALUE 20
@@ -839,12 +886,41 @@ int refreshMessageCounter = 0;
 void loop() {
   // This 
   switch(state) {
-  case CONF:
-    dnsServer.processNextRequest();
-    server.handleClient();
-    break;
   case WELCOME:
-    
+    delay(LOOP_DELAY);
+    switch(stateWelcome) {
+      case LOGO:
+        welcomeCounter++;
+        if(welcomeCounter > 100)
+          Serial.printf("Go to Greetings");
+          switchScreen(drawWelcomeFrame,0,drawGreetingsFrame,0,RIGHT);
+          stateWelcome = GREETINGS;
+        break;
+      case GREETINGS:
+        Serial.printf("GREETINGS\n");
+        if(bEvent == UP_BUTTON) {  // We clicked UP screens goes DOWN
+          if(currWelcome != 0) {
+            switchScreen(drawGreetingsFrame,currWelcome,drawGreetingsFrame,currWelcome+1,DOWN);
+          }
+        }
+        if(bEvent == DOWN_BUTTON) {
+          if(currWelcome != nWelcomeFrames-1) {
+            switchScreen(drawGreetingsFrame,currWelcome,drawGreetingsFrame,currWelcome-1,UP);
+          }
+        }
+        if(bEvent == ENTER_BUTTON) {
+          stateWelcome = CONF;
+          switchScreen(drawGreetingsFrame,currWelcome,drawConfigurationFrame,0,RIGHT);
+        }
+        bEvent = NONE;
+        break;
+      default:
+      case CONF:
+        dnsServer.processNextRequest();
+        server.handleClient();
+        break;
+    }
+    break;
   default:
   case MENU:
     delay(LOOP_DELAY);
@@ -942,7 +1018,6 @@ void loop() {
         state = MENU;
         switchScreen(drawQuoteFrame,currQuote,frames[dispFrameIndex],0,LEFT);
     }
-    bEvent = NONE;
     bEvent = NONE;
     break;
   case BRIEFS:
